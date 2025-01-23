@@ -21,7 +21,7 @@ os.chdir(parent_directory)
 sys.path.append(parent_directory)
 
 # Local function imports
-from rags.document_loaders import get_all_presidential_actions, filter_executive_orders, load_documents
+from rags.document_loaders import load_documents
 
 # Load in environment variable and set a project name for langsmith tracing
 load_dotenv("env.yaml")
@@ -34,14 +34,10 @@ vector_store = InMemoryVectorStore(embeddings)
 start_url = "https://www.whitehouse.gov/presidential-actions/"
 
 # Reading in all presidential actions from the White House Gov website, filtering to executive orders and processing into document objects
-vector_store = load_documents(embeddings = embeddings, vector_store = vector_store, start_url = start_url)
-
+vector_store = load_documents(embeddings_model = embeddings, vector_store = vector_store, start_url = start_url)
 prompt = hub.pull("rlm/rag-prompt")
 
-example_messages = prompt.invoke(
-    {"context": "(context goes here)", "question": "(question goes here)"}
-).to_messages()
-
+# Create LangGraph
 class State(TypedDict):
     question: str
     context: List[Document]
@@ -66,7 +62,7 @@ graph_builder = StateGraph(State).add_sequence([retrieve, generate])
 graph_builder.add_edge(START, "retrieve")
 graph = graph_builder.compile(checkpointer=memory)
 
-# First question
+# Invoke
 result = graph.invoke({"question": "What executive orders are about women?"}, config=config)
 print(f'Context: {result["context"]}\n\n')
 print(f'Answer: {result["answer"]}\n\n')
