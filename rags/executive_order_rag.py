@@ -21,14 +21,14 @@ os.chdir(parent_directory)
 sys.path.append(parent_directory)
 
 # Local function imports
-from rags.document_loaders import load_documents, vectorise_documents, vectorise_documents_basic
+from rags.document_loaders import load_documents, vectorise_documents
 
 # Load in environment variable and set a project name for langsmith tracing
 load_dotenv("env.yaml")
-os.environ["LANGSMITH_PROJECT"] = "test-rag-using-lang-smith-jada-ross"
+os.environ["LANGSMITH_PROJECT"] = "executive-order-rag-testing"
 
 # Load in LLM, Embeddings, and Vector Store
-llm = ChatOpenAI(model="gpt-4o-mini")
+llm = ChatOpenAI(model="gpt-4o")
 embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
 vector_store = InMemoryVectorStore(embeddings)
 start_url = "https://www.whitehouse.gov/presidential-actions/"
@@ -36,7 +36,6 @@ start_url = "https://www.whitehouse.gov/presidential-actions/"
 # Reading in all presidential actions from the White House Gov website, filtering to executive orders and processing into document objects
 docs = load_documents(start_url=start_url)
 retriever = vectorise_documents(docs=docs, vector_store=vector_store)
-
 prompt = hub.pull("rlm/rag-prompt")
 
 # Create LangGraph
@@ -90,7 +89,6 @@ graph = graph_builder.compile()
 
 # Invoke
 result = graph.invoke({"question": "What executive orders are about women?"})
-
 print(f'Answer: {result["answer"]}\n\n')
 
 
