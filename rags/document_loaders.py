@@ -163,12 +163,15 @@ def extract_title_and_content(html):
     
     return f"Title: {title}\n\nContent: {content}"
 
-def load_documents(embeddings_model, vector_store, start_url):
+def load_documents(start_url):
 
     all_urls = get_all_presidential_actions(start_url)
-    rag_docs = filter_executive_orders(all_urls)
+    docs = filter_executive_orders(all_urls)
 
-    print(f"\nProcessed {len(rag_docs)} documents for RAG system:")
+    print(f"\nProcessed {len(docs)} documents for RAG system:")
+    return docs
+
+def vectorise_documents(docs: List[ExecutiveOrderDocument], vector_store):
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
@@ -177,7 +180,7 @@ def load_documents(embeddings_model, vector_store, start_url):
     )
 
     # Process documents and create chunks with metadata
-    for doc in rag_docs:
+    for doc in docs:
         doc_id = str(uuid4())  # Generate unique ID for each document
         chunks = text_splitter.create_documents(
             texts=[doc.content],

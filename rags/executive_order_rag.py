@@ -21,7 +21,7 @@ os.chdir(parent_directory)
 sys.path.append(parent_directory)
 
 # Local function imports
-from rags.document_loaders import load_documents
+from rags.document_loaders import load_documents, vectorise_documents
 
 # Load in environment variable and set a project name for langsmith tracing
 load_dotenv("env.yaml")
@@ -34,7 +34,10 @@ vector_store = InMemoryVectorStore(embeddings)
 start_url = "https://www.whitehouse.gov/presidential-actions/"
 
 # Reading in all presidential actions from the White House Gov website, filtering to executive orders and processing into document objects
-vectorstore = load_documents(embeddings_model = embeddings, vector_store = vector_store, start_url = start_url)
+docs = load_documents(start_url=start_url)
+
+vectorstore = vectorise_documents(docs=docs, vector_store=vector_store)
+
 retriever = vectorstore.as_retriever()
 
 prompt = hub.pull("rlm/rag-prompt")
@@ -98,9 +101,26 @@ graph_builder = StateGraph(State).add_sequence([retrieve, generate])
 graph_builder.add_edge(START, "retrieve")
 graph = graph_builder.compile(checkpointer=memory)
 
+
+from langchain_core.documents import Document
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+
+chain = (
+    {"doc": lambda x: x.page_content}
+    | ChatPromptTemplate.from_template("Summarize the following document:\n\n{doc}")
+    | ChatOpenAI(model="gpt-3.5-turbo",max_retries=0)
+    | StrOutputParser()
+)
+
+summaries = chain.batch(docs, {"max_concurrency": 5})
+print(summaries)
+
+
 # Invoke
-result = graph.invoke({"question": "What executive orders are about women?"}, config=config)
-print(f'Context: {result["context"]}\n\n')
-print(f'Answer: {result["answer"]}\n\n')
+# result = graph.invoke({"question": "What executive orders are about women?"}, config=config)
+# print(f'Context: {result["context"]}\n\n')
+# print(f'Answer: {result["answer"]}\n\n')
 
 
