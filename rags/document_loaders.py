@@ -177,7 +177,6 @@ def load_documents(embeddings_model, vector_store, start_url):
     )
 
     # Process documents and create chunks with metadata
-    all_chunks = []
     for doc in rag_docs:
         doc_id = str(uuid4())  # Generate unique ID for each document
         chunks = text_splitter.create_documents(

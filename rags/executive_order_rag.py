@@ -34,7 +34,9 @@ vector_store = InMemoryVectorStore(embeddings)
 start_url = "https://www.whitehouse.gov/presidential-actions/"
 
 # Reading in all presidential actions from the White House Gov website, filtering to executive orders and processing into document objects
-vector_store = load_documents(embeddings_model = embeddings, vector_store = vector_store, start_url = start_url)
+vectorstore = load_documents(embeddings_model = embeddings, vector_store = vector_store, start_url = start_url)
+retriever = vectorstore.as_retriever()
+
 prompt = hub.pull("rlm/rag-prompt")
 
 # Create LangGraph
@@ -43,8 +45,42 @@ class State(TypedDict):
     context: List[Document]
     answer: str
 
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI
+from langchain.load import dumps, loads
+from langchain.prompts import ChatPromptTemplate
+
 def retrieve(state: State):
-    retrieved_docs = vector_store.similarity_search(state["question"])
+
+    template = """You are an AI language model assistant. Your task is to generate three 
+    different versions of the given user question to retrieve relevant documents from a vector 
+    database. By generating multiple perspectives on the user question, your goal is to help
+    the user overcome some of the limitations of the distance-based similarity search. 
+    Provide these alternative questions separated by newlines. Original question: {question}"""
+
+    prompt_perspectives = ChatPromptTemplate.from_template(template)
+
+    generate_queries = (
+        prompt_perspectives 
+        | ChatOpenAI(temperature=0) 
+        | StrOutputParser() 
+        | (lambda x: x.split("\n"))
+    )
+
+    def get_unique_union(documents: list[list]):
+        """ Unique union of retrieved docs """
+        # Flatten list of lists, and convert each Document to string
+        flattened_docs = [dumps(doc) for sublist in documents for doc in sublist]
+        # Get unique documents
+        unique_docs = list(set(flattened_docs))
+        # Return
+        return [loads(doc) for doc in unique_docs]
+
+    # Retrieve
+    retrieval_chain = generate_queries | retriever.map() | get_unique_union
+    retrieved_docs = retrieval_chain.invoke({"question":state["question"]})
+
+    # retrieved_docs = vectorstore.similarity_search(state["question"])
     return {"context": retrieved_docs}
 
 def generate(state: State):
