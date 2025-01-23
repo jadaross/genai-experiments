@@ -1,23 +1,18 @@
 from bs4 import BeautifulSoup
 import requests
 from urllib.parse import urljoin, urlparse
-from typing import Set, Tuple, List
+from typing import Set, List
 from langchain_community.document_loaders import RecursiveUrlLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-import uuid
 from langchain.storage import InMemoryByteStore
-from langchain_openai import OpenAIEmbeddings
 from langchain.retrievers.multi_vector import MultiVectorRetriever
-
-from dataclasses import dataclass
-from typing import List, Dict, Optional
 from datetime import datetime
-import re
 from uuid import uuid4
+import uuid
 
 def filter_executive_orders(urls: Set[str]) -> List[Document]:
     """Convert filtered URLs into RAG-suitable document objects"""

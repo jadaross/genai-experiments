@@ -1,10 +1,8 @@
-# Basic Imports
+import chainlit as cl
 from dotenv import load_dotenv
-from typing import List
-import sys
 import os
-
-# Langchain Community Imports
+import sys
+from typing import List
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_core.output_parsers import StrOutputParser
@@ -12,7 +10,7 @@ from langchain.load import dumps, loads
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
 from langgraph.graph import START, StateGraph
-from typing_extensions import List, TypedDict
+from typing_extensions import TypedDict
 from langchain import hub
 
 # Set the correct directory for the project
@@ -21,32 +19,40 @@ os.chdir(parent_directory)
 sys.path.append(parent_directory)
 
 # Local function imports
-from rags.document_loaders import load_documents, vectorise_documents, vectorise_documents_basic
+from rags.document_loaders import load_documents, vectorise_documents
 
-# Load in environment variable and set a project name for langsmith tracing
+# Load environment variables
 load_dotenv("env.yaml")
 os.environ["LANGSMITH_PROJECT"] = "test-rag-using-lang-smith-jada-ross"
 
-# Load in LLM, Embeddings, and Vector Store
-llm = ChatOpenAI(model="gpt-4o-mini")
-embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
-vector_store = InMemoryVectorStore(embeddings)
-start_url = "https://www.whitehouse.gov/presidential-actions/"
-
-# Reading in all presidential actions from the White House Gov website, filtering to executive orders and processing into document objects
-docs = load_documents(start_url=start_url)
-retriever = vectorise_documents(docs=docs, vector_store=vector_store)
-
-prompt = hub.pull("rlm/rag-prompt")
-
-# Create LangGraph
 class State(TypedDict):
     question: str
     context: List[Document]
     answer: str
 
-def retrieve(state: State):
+@cl.on_chat_start
+async def on_chat_start():
+    # Initialize your RAG components
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+    vector_store = InMemoryVectorStore(embeddings)
+    start_url = "https://www.whitehouse.gov/presidential-actions/"
 
+    # Load and process documents
+    docs = load_documents(start_url=start_url)
+    retriever = vectorise_documents(docs=docs, vector_store=vector_store)
+    prompt = hub.pull("rlm/rag-prompt")
+
+    # Store the components in the user session
+    cl.user_session.set("retriever", retriever)
+    cl.user_session.set("llm", llm)
+    cl.user_session.set("prompt", prompt)
+
+    await cl.Message(content="Ready to answer questions about executive orders! How can I help?").send()
+
+def retrieve(state: State):
+    retriever = cl.user_session.get("retriever")
+    
     template = """You are an AI language model assistant. Your task is to generate three 
     different versions of the given user question to retrieve relevant documents from a vector 
     database. By generating multiple perspectives on the user question, your goal is to help
@@ -54,43 +60,52 @@ def retrieve(state: State):
     Provide these alternative questions separated by newlines. Original question: {question}"""
 
     prompt_perspectives = ChatPromptTemplate.from_template(template)
+    llm = cl.user_session.get("llm")
 
     generate_queries = (
         prompt_perspectives 
-        | ChatOpenAI(temperature=0) 
+        | llm
         | StrOutputParser() 
         | (lambda x: x.split("\n"))
     )
 
     def get_unique_union(documents: list[list]):
-        """ Unique union of retrieved docs """
-        # Flatten list of lists, and convert each Document to string
         flattened_docs = [dumps(doc) for sublist in documents for doc in sublist]
-        # Get unique documents
         unique_docs = list(set(flattened_docs))
-        # Return
         return [loads(doc) for doc in unique_docs]
 
-    # Retrieve
     retrieval_chain = generate_queries | retriever.map() | get_unique_union
-    retrieved_docs = retrieval_chain.invoke({"question":state["question"]})
+    retrieved_docs = retrieval_chain.invoke({"question": state["question"]})
 
     return {"context": retrieved_docs}
 
 def generate(state: State):
+    llm = cl.user_session.get("llm")
+    prompt = cl.user_session.get("prompt")
+    
     docs_content = "\n\n".join(doc.page_content for doc in state["context"])
     messages = prompt.invoke({"question": state["question"], "context": docs_content})
     response = llm.invoke(messages)
     return {"answer": response.content}
 
-# Build the graph and compile with memory
-graph_builder = StateGraph(State).add_sequence([retrieve, generate])
-graph_builder.add_edge(START, "retrieve")
-graph = graph_builder.compile()
+@cl.on_message
+async def main(message: cl.Message):
+    # Build the graph
+    graph_builder = StateGraph(State).add_sequence([retrieve, generate])
+    graph_builder.add_edge(START, "retrieve")
+    graph = graph_builder.compile()
 
-# Invoke
-result = graph.invoke({"question": "What executive orders are about women?"})
+    # Show thinking message
+    thinking_msg = cl.Message(content="Searching through documents...")
+    await thinking_msg.send()
 
-print(f'Answer: {result["answer"]}\n\n')
+    # Get response from graph
+    result = graph.invoke({"question": message.content})
+    
+    # Update thinking message with final response
+    thinking_msg.content = result["answer"]
+    await thinking_msg.update()
 
-
+# Run the app
+if __name__ == "__main__":
+    cl.run()
