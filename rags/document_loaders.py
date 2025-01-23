@@ -3,6 +3,7 @@ import requests
 from urllib.parse import urljoin, urlparse
 from typing import Set, Tuple, List
 from langchain_community.document_loaders import RecursiveUrlLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from dataclasses import dataclass
 from typing import List, Dict, Optional
@@ -161,3 +162,35 @@ def extract_title_and_content(html):
         content = main_content.get_text(strip=True, separator=' ')
     
     return f"Title: {title}\n\nContent: {content}"
+
+def load_documents(embeddings_model, vector_store, start_url):
+
+    all_urls = get_all_presidential_actions(start_url)
+    rag_docs = filter_executive_orders(all_urls)
+
+    print(f"\nProcessed {len(rag_docs)} documents for RAG system:")
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        separators=["\n\n", "\n", " ", ""]
+    )
+
+    # Process documents and create chunks with metadata
+    all_chunks = []
+    for doc in rag_docs:
+        doc_id = str(uuid4())  # Generate unique ID for each document
+        chunks = text_splitter.create_documents(
+            texts=[doc.content],
+            metadatas=[{
+                "title": doc.title,
+                "date": str(doc.date),  # Convert datetime to string
+                "url": doc.url,
+                "document_id": doc_id,
+                "chunk_number": i  # Add chunk number for ordering
+            } for i in range(len(text_splitter.split_text(doc.content)))]
+        )
+        # Add chunks to vector store
+        vector_store.add_documents(chunks)
+    
+    return vector_store
