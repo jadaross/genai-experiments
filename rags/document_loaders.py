@@ -4,6 +4,14 @@ from urllib.parse import urljoin, urlparse
 from typing import Set, Tuple, List
 from langchain_community.document_loaders import RecursiveUrlLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+import uuid
+from langchain.storage import InMemoryByteStore
+from langchain_openai import OpenAIEmbeddings
+from langchain.retrievers.multi_vector import MultiVectorRetriever
 
 from dataclasses import dataclass
 from typing import List, Dict, Optional
@@ -11,33 +19,7 @@ from datetime import datetime
 import re
 from uuid import uuid4
 
-@dataclass
-class ExecutiveOrderDocument:
-    """Class to store executive order documents in a format suitable for RAG"""
-    title: str
-    url: str
-    content: str
-    date: Optional[datetime]
-    metadata: Dict
-    
-    def __post_init__(self):
-        """Extract and parse date from URL after initialization"""
-        date_match = re.search(r'/(\d{4})/(\d{2})/', self.url)
-        if date_match:
-            year, month = date_match.groups()
-            self.date = datetime(int(year), int(month), 1)  # Using 1st of month as default day
-            
-    def to_dict(self) -> Dict:
-        """Convert document to dictionary format"""
-        return {
-            "title": self.title,
-            "url": self.url,
-            "content": self.content,
-            "date": self.date.isoformat() if self.date else None,
-            "metadata": self.metadata
-        }
-
-def filter_executive_orders(urls: Set[str]) -> List[ExecutiveOrderDocument]:
+def filter_executive_orders(urls: Set[str]) -> List[Document]:
     """Convert filtered URLs into RAG-suitable document objects"""
     rag_documents = []
     
@@ -91,12 +73,14 @@ def filter_executive_orders(urls: Set[str]) -> List[ExecutiveOrderDocument]:
                 }
                 
                 # Create document object
-                rag_doc = ExecutiveOrderDocument(
-                    title=title,
-                    url=url,
-                    content=content,
-                    date=None,  # Will be set in post_init
-                    metadata=enhanced_metadata
+                rag_doc = Document(
+                    page_content=content,
+                    metadata={
+                        "title": title,
+                        "url": url,
+                        "date": None,  # Will be set in post_init
+                        **enhanced_metadata
+                    }
                 )
                 
                 rag_documents.append(rag_doc)
@@ -171,7 +155,7 @@ def load_documents(start_url):
     print(f"\nProcessed {len(docs)} documents for RAG system:")
     return docs
 
-def vectorise_documents(docs: List[ExecutiveOrderDocument], vector_store):
+def vectorise_documents_basic(docs: List[Document], vector_store):
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
@@ -183,16 +167,49 @@ def vectorise_documents(docs: List[ExecutiveOrderDocument], vector_store):
     for doc in docs:
         doc_id = str(uuid4())  # Generate unique ID for each document
         chunks = text_splitter.create_documents(
-            texts=[doc.content],
+            texts=[doc.page_content],
             metadatas=[{
-                "title": doc.title,
-                "date": str(doc.date),  # Convert datetime to string
-                "url": doc.url,
+                "title": doc.metadata["title"],
+                "date": str(doc.metadata["date"]),  # Convert datetime to string
+                "url": doc.metadata["url"],
                 "document_id": doc_id,
                 "chunk_number": i  # Add chunk number for ordering
-            } for i in range(len(text_splitter.split_text(doc.content)))]
+            } for i in range(len(text_splitter.split_text(doc.page_content)))]
         )
         # Add chunks to vector store
         vector_store.add_documents(chunks)
     
     return vector_store
+
+def vectorise_documents(docs: List[Document], vector_store):
+
+    chain = (
+    {"doc": lambda x: x.page_content}
+    | ChatPromptTemplate.from_template("Summarize the following document:\n\n{doc}")
+    | ChatOpenAI(model="gpt-3.5-turbo",max_retries=0)
+    | StrOutputParser()
+    )   
+
+    summaries = chain.batch(docs, {"max_concurrency": 5})
+    store = InMemoryByteStore()
+    id_key = "doc_id"
+
+    # The retriever
+    retriever = MultiVectorRetriever(
+        vectorstore=vector_store,
+        byte_store=store,
+        id_key=id_key,
+    )
+    doc_ids = [str(uuid.uuid4()) for _ in docs]
+
+    # Docs linked to summaries
+    summary_docs = [
+        Document(page_content=s, metadata={id_key: doc_ids[i]})
+        for i, s in enumerate(summaries)
+    ]
+
+    # Add
+    retriever.vectorstore.add_documents(summary_docs)
+    retriever.docstore.mset(list(zip(doc_ids, docs)))
+
+    return retriever

@@ -8,12 +8,18 @@ import os
 # Langchain Community Imports
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.vectorstores import InMemoryVectorStore
+from langchain_chroma import Chroma
 
 from langchain_core.documents import Document
 from langgraph.graph import START, StateGraph
 from typing_extensions import List, TypedDict
 from langgraph.checkpoint.memory import MemorySaver
 from langchain import hub
+from langchain_openai import ChatOpenAI
+import uuid
+from langchain.storage import InMemoryByteStore
+from langchain_openai import OpenAIEmbeddings
+from langchain.retrievers.multi_vector import MultiVectorRetriever
 
 # Set the correct directory for the project
 parent_directory = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -21,7 +27,7 @@ os.chdir(parent_directory)
 sys.path.append(parent_directory)
 
 # Local function imports
-from rags.document_loaders import load_documents, vectorise_documents
+from rags.document_loaders import load_documents, vectorise_documents, vectorise_documents_basic
 
 # Load in environment variable and set a project name for langsmith tracing
 load_dotenv("env.yaml")
@@ -35,10 +41,7 @@ start_url = "https://www.whitehouse.gov/presidential-actions/"
 
 # Reading in all presidential actions from the White House Gov website, filtering to executive orders and processing into document objects
 docs = load_documents(start_url=start_url)
-
-vectorstore = vectorise_documents(docs=docs, vector_store=vector_store)
-
-retriever = vectorstore.as_retriever()
+retriever = vectorise_documents(docs=docs, vector_store=vector_store)
 
 prompt = hub.pull("rlm/rag-prompt")
 
@@ -83,7 +86,6 @@ def retrieve(state: State):
     retrieval_chain = generate_queries | retriever.map() | get_unique_union
     retrieved_docs = retrieval_chain.invoke({"question":state["question"]})
 
-    # retrieved_docs = vectorstore.similarity_search(state["question"])
     return {"context": retrieved_docs}
 
 def generate(state: State):
@@ -101,26 +103,8 @@ graph_builder = StateGraph(State).add_sequence([retrieve, generate])
 graph_builder.add_edge(START, "retrieve")
 graph = graph_builder.compile(checkpointer=memory)
 
-
-from langchain_core.documents import Document
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
-
-chain = (
-    {"doc": lambda x: x.page_content}
-    | ChatPromptTemplate.from_template("Summarize the following document:\n\n{doc}")
-    | ChatOpenAI(model="gpt-3.5-turbo",max_retries=0)
-    | StrOutputParser()
-)
-
-summaries = chain.batch(docs, {"max_concurrency": 5})
-print(summaries)
-
-
 # Invoke
-# result = graph.invoke({"question": "What executive orders are about women?"}, config=config)
-# print(f'Context: {result["context"]}\n\n')
-# print(f'Answer: {result["answer"]}\n\n')
+result = graph.invoke({"question": "What executive orders are about women?"}, config=config)
+print(f'Answer: {result["answer"]}\n\n')
 
 
