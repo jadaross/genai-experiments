@@ -95,7 +95,7 @@ def generate(state: State):
     return {"answer": response.content}
 
 # Specify an ID for the thread so the RAG system can keep track of the conversation and initiate a Memory object
-config = {"configurable": {"thread_id": "test-women"}}
+config = {"configurable": {"thread_id": "test-women-real"}}
 memory = MemorySaver()
 
 # Build the graph and compile with memory
@@ -105,6 +105,7 @@ graph = graph_builder.compile(checkpointer=memory)
 
 # Invoke
 result = graph.invoke({"question": "What executive orders are about women?"}, config=config)
+
 print(f'Answer: {result["answer"]}\n\n')
 
 
