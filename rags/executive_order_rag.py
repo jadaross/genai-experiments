@@ -12,15 +12,16 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langgraph.graph import START, StateGraph
 from typing_extensions import List, TypedDict
+from langgraph.checkpoint.memory import MemorySaver
 from langchain import hub
-
-# Local function imports
-from rags.document_loaders import get_all_presidential_actions, filter_executive_orders
 
 # Set the correct directory for the project
 parent_directory = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 os.chdir(parent_directory)
 sys.path.append(parent_directory)
+
+# Local function imports
+from rags.document_loaders import get_all_presidential_actions, filter_executive_orders
 
 # Load in environment variable and set a project name for langsmith tracing
 load_dotenv("env.yaml")
@@ -83,11 +84,22 @@ def generate(state: State):
     response = llm.invoke(messages)
     return {"answer": response.content}
 
+# Specify an ID for the thread so the RAG system can keep track of the conversation and initiate a Memory object
+config = {"configurable": {"thread_id": "123456789"}}
+memory = MemorySaver()
+
+# Build the graph and compile with memory
 graph_builder = StateGraph(State).add_sequence([retrieve, generate])
 graph_builder.add_edge(START, "retrieve")
-graph = graph_builder.compile()
+graph = graph_builder.compile(checkpointer=memory, config=config)
 
+# First question
 result = graph.invoke({"question": "What is the latest executive order created by Trump?"})
-
 print(f'Context: {result["context"]}\n\n')
-print(f'Answer: {result["answer"]}')
+print(f'Answer: {result["answer"]}\n\n')
+
+# Follow-up question using the same graph
+follow_up = graph.invoke({"question": "Can you summarize the executive order for me?"})
+print(f'Context: {follow_up["context"]}\n\n')
+print(f'Answer: {follow_up["answer"]}')
+
