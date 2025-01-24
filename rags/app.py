@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 import os
 import sys
 from typing import List
+import re
+import html
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_core.output_parsers import StrOutputParser
@@ -19,7 +21,7 @@ os.chdir(parent_directory)
 sys.path.append(parent_directory)
 
 # Local function imports
-from rags.document_loaders import load_documents, vectorise_documents
+from rags.document_loaders import load_documents, vectorise_documents, sanitise_input, validate_question
 
 # Load environment variables
 load_dotenv("env.yaml")
@@ -29,12 +31,12 @@ class State(TypedDict):
     question: str
     context: List[Document]
     answer: str
-    sources: List[str]  # Added sources to track document metadata
+    sources: List[str]
 
 @cl.on_chat_start
 async def on_chat_start():
     # Initialize your RAG components
-    llm = ChatOpenAI(model="gpt-4o")
+    llm = ChatOpenAI(model="gpt-4")
     embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
     vector_store = InMemoryVectorStore(embeddings)
     start_url = "https://www.whitehouse.gov/presidential-actions/"
@@ -49,7 +51,7 @@ async def on_chat_start():
     cl.user_session.set("llm", llm)
     cl.user_session.set("prompt", prompt)
 
-    await cl.Message(content="Ready to answer questions about executive orders! How can I help?").send()
+    await cl.Message(content="Ready to answer questions about Executive Orders! How can I help?").send()
 
 def retrieve(state: State):
     retriever = cl.user_session.get("retriever")
@@ -82,13 +84,13 @@ def retrieve(state: State):
     sources = []
     for doc in retrieved_docs:
         if hasattr(doc, 'metadata') and 'source' in doc.metadata:
-            sources.append(doc.metadata['source'])
+            sources.append(html.escape(doc.metadata['source']))
         elif hasattr(doc, 'metadata') and 'url' in doc.metadata:
-            sources.append(doc.metadata['url'])
+            sources.append(html.escape(doc.metadata['url']))
         else:
             sources.append("Unknown source")
 
-    return {"context": retrieved_docs, "sources": list(set(sources))}  # Deduplicate sources
+    return {"context": retrieved_docs, "sources": list(set(sources))}
 
 def generate(state: State):
     llm = cl.user_session.get("llm")
@@ -101,26 +103,38 @@ def generate(state: State):
 
 @cl.on_message
 async def main(message: cl.Message):
-    # Build the graph
-    graph_builder = StateGraph(State).add_sequence([retrieve, generate])
-    graph_builder.add_edge(START, "retrieve")
-    graph = graph_builder.compile()
+    try:
+        # Sanitise and validate user input
+        sanitised_question = sanitise_input(message.content)
+        
+        if not validate_question(sanitised_question):
+            await cl.Message(content="I apologize, but your question appears to be invalid or potentially harmful. Please rephrase your question.").send()
+            return
+        
+        # Build the graph
+        graph_builder = StateGraph(State).add_sequence([retrieve, generate])
+        graph_builder.add_edge(START, "retrieve")
+        graph = graph_builder.compile()
 
-    # Show thinking message
-    thinking_msg = cl.Message(content="Searching through documents...")
-    await thinking_msg.send()
+        # Show thinking message
+        thinking_msg = cl.Message(content="Searching through documents...")
+        await thinking_msg.send()
 
-    # Get response from graph
-    result = graph.invoke({"question": message.content})
-    
-    # Create the response with sources
-    response_content = f"{result['answer']}\n\nSources:\n"
-    for source in result.get('sources', []):
-        response_content += f"- {source}\n"
+        # Get response from graph
+        result = graph.invoke({"question": sanitised_question})
+        
+        # Create the response with sources
+        response_content = f"{result['answer']}\n\nSources:\n"
+        for source in result.get('sources', []):
+            response_content += f"- {source}\n"
 
-    # Update thinking message with final response and sources
-    thinking_msg.content = response_content
-    await thinking_msg.update()
+        # Update thinking message with final response and sources
+        thinking_msg.content = response_content
+        await thinking_msg.update()
+        
+    except Exception as e:
+        error_message = f"An error occurred while processing your request: {str(e)}"
+        await cl.Message(content=error_message).send()
 
 # Run the app
 if __name__ == "__main__":

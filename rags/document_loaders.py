@@ -13,6 +13,8 @@ from langchain.retrievers.multi_vector import MultiVectorRetriever
 from datetime import datetime
 from uuid import uuid4
 import uuid
+import html
+import re
 
 def filter_executive_orders(urls: Set[str]) -> List[Document]:
     """
@@ -269,3 +271,70 @@ def vectorise_documents_basic(docs: List[Document], vector_store):
         vector_store.add_documents(chunks)
     
     return vector_store
+
+def sanitise_input(text: str) -> str:
+    """
+    Sanitise user input to prevent prompt injection and other attacks.
+    
+    Args:
+        text (str): Raw user input
+        
+    Returns:
+        str: Sanitized text
+    """
+    if not isinstance(text, str):
+        raise ValueError("Input must be a string")
+    
+    # Limit input length
+    MAX_LENGTH = 1000
+    text = text[:MAX_LENGTH]
+    
+    # Remove any HTML/XML tags
+    text = html.escape(text)
+    
+    # Remove potential prompt injection patterns
+    patterns_to_remove = [
+        r'<\|.*?\|>',  # Remove model tokens
+        r'###.*?###',  # Remove markdown headers
+        r'```.*?```',  # Remove code blocks
+        r'\[system\].*?\[/system\]',  # Remove system prompts
+        r'system:\s*.*?\n',  # Remove system prompts
+        r'user:\s*.*?\n',    # Remove user prompts
+        r'assistant:\s*.*?\n' # Remove assistant prompts
+    ]
+    
+    for pattern in patterns_to_remove:
+        text = re.sub(pattern, '', text, flags=re.DOTALL)
+    
+    # Remove control characters and non-printable characters
+    text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\t')
+    
+    # Normalize whitespace
+    text = ' '.join(text.split())
+    
+    return text
+
+def validate_question(question: str) -> bool:
+    """
+    Validate if the question meets security requirements.
+    
+    Args:
+        question (str): Sanitized question
+        
+    Returns:
+        bool: True if valid, False otherwise
+    """
+    # Check minimum length
+    if len(question) < 3:
+        return False
+    
+    # Check if question contains actual content (not just special characters)
+    if not re.search(r'[a-zA-Z]', question):
+        return False
+    
+    # Check for excessive special characters
+    special_char_ratio = len(re.findall(r'[^a-zA-Z0-9\s]', question)) / len(question)
+    if special_char_ratio > 0.3:  # More than 30% special characters
+        return False
+    
+    return True
