@@ -36,7 +36,7 @@ class State(TypedDict):
 @cl.on_chat_start
 async def on_chat_start():
     # Initialize your RAG components
-    llm = ChatOpenAI(model="gpt-4")
+    llm = ChatOpenAI(model="gpt-4o")
     embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
     vector_store = InMemoryVectorStore(embeddings)
     start_url = "https://www.whitehouse.gov/presidential-actions/"
