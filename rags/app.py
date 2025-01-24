@@ -29,6 +29,7 @@ class State(TypedDict):
     question: str
     context: List[Document]
     answer: str
+    sources: List[str]  # Added sources to track document metadata
 
 @cl.on_chat_start
 async def on_chat_start():
@@ -77,7 +78,17 @@ def retrieve(state: State):
     retrieval_chain = generate_queries | retriever.map() | get_unique_union
     retrieved_docs = retrieval_chain.invoke({"question": state["question"]})
 
-    return {"context": retrieved_docs}
+    # Extract source information from documents
+    sources = []
+    for doc in retrieved_docs:
+        if hasattr(doc, 'metadata') and 'source' in doc.metadata:
+            sources.append(doc.metadata['source'])
+        elif hasattr(doc, 'metadata') and 'url' in doc.metadata:
+            sources.append(doc.metadata['url'])
+        else:
+            sources.append("Unknown source")
+
+    return {"context": retrieved_docs, "sources": list(set(sources))}  # Deduplicate sources
 
 def generate(state: State):
     llm = cl.user_session.get("llm")
@@ -102,8 +113,13 @@ async def main(message: cl.Message):
     # Get response from graph
     result = graph.invoke({"question": message.content})
     
-    # Update thinking message with final response
-    thinking_msg.content = result["answer"]
+    # Create the response with sources
+    response_content = f"{result['answer']}\n\nSources:\n"
+    for source in result.get('sources', []):
+        response_content += f"- {source}\n"
+
+    # Update thinking message with final response and sources
+    thinking_msg.content = response_content
     await thinking_msg.update()
 
 # Run the app
